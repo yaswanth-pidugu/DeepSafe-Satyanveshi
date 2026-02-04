@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+.venv1/
+env/
+
+# Data (DO NOT PUSH DATASETS)
+data/raw/
+data/processed/
+data/splits/
+
+# Outputs
+outputs/
+*.jpg
+*.png
+
+# Models (keep only if small)
+models/*.pth
+
+# OS
+.DS_Store
+Thumbs.db
+
+.idea/
