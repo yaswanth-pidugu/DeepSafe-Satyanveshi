@@ -22,12 +22,11 @@ transform = transforms.Compose([
 
 
 def train():
-    train_ds = DeepSafeDataset(split_dir="../data/splits/train", transform=transform)
-    val_ds = DeepSafeDataset(split_dir="../data/splits/val", transform=transform)
+    train_ds = DeepSafeDataset(split_dir=Path(cfg['paths']['splits']) / "train", transform=transform)
+    val_ds = DeepSafeDataset(split_dir=Path(cfg['paths']['splits']) / "val", transform=transform)
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
-
     model = DeepSafeModel().to(DEVICE)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=LR)

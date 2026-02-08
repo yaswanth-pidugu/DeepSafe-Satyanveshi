@@ -65,9 +65,10 @@ def predict_best(video_path):
 
     final_prob = np.mean(probs)
 
-    if final_prob > cfg['model']['thresholds']['fake']:
+
+    if final_prob > cfg['inference']['threshold_fake']:
         verdict = "FAKE"
-    elif final_prob < cfg['model']['thresholds']['real']:
+    elif final_prob < cfg['inference']['threshold_real']:
         verdict = "REAL"
     else:
         verdict = "INCONCLUSIVE (NEEDS REVIEW)"
