@@ -1,66 +1,39 @@
-import os
-import random
 import shutil
+import random
+from pathlib import Path
+from config_manager import cfg
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-FACES_DIR = os.path.join(PROJECT_ROOT, "data", "processed", "faces")
-SPLITS_DIR = os.path.join(PROJECT_ROOT, "data", "splits")
-
-SPLIT_RATIOS = {
-    "train": 0.7,
-    "val": 0.15,
-    "test": 0.15
-}
-
-random.seed(42)
+SOURCE_BASE = Path(cfg['paths']['processed_faces'])
+SPLIT_BASE = Path(cfg['paths']['splits'])
+TRAIN_RATIO = cfg['data_split']['train']
+VAL_RATIO = cfg['data_split']['val']
 
 
-def make_dirs():
-    for split in ["train", "val", "test"]:
-        for label in ["real", "fake"]:
-            os.makedirs(os.path.join(SPLITS_DIR, split, label), exist_ok=True)
+def split_dataset():
+    for label in ['real', 'fake']:
+        source_dir = SOURCE_BASE / label
+        video_folders = [f.name for f in source_dir.iterdir() if f.is_dir()]
 
+        random.seed(42)
+        random.shuffle(video_folders)
 
-def split_videos(video_list):
-    random.shuffle(video_list)
-    total = len(video_list)
+        train_count = int(len(video_folders) * TRAIN_RATIO)
+        val_count = int(len(video_folders) * VAL_RATIO)
 
-    train_end = int(SPLIT_RATIOS["train"] * total)
-    val_end = train_end + int(SPLIT_RATIOS["val"] * total)
+        train_vids = video_folders[:train_count]
+        val_vids = video_folders[train_count:train_count + val_count]
+        test_vids = video_folders[train_count + val_count:]
 
-    return {
-        "train": video_list[:train_end],
-        "val": video_list[train_end:val_end],
-        "test": video_list[val_end:]
-    }
+        splits = {'train': train_vids, 'val': val_vids, 'test': test_vids}
 
+        for split_name, vids in splits.items():
+            print(f"Moving {len(vids)} {label} videos to {split_name}...")
+            dest_dir = SPLIT_BASE / split_name / label
+            dest_dir.mkdir(parents=True, exist_ok=True)
 
-def copy_video(video_name, label, split):
-    src_dir = os.path.join(FACES_DIR, label, video_name)
-    dst_dir = os.path.join(SPLITS_DIR, split, label, video_name)
-
-    shutil.copytree(src_dir, dst_dir)
-
-
-def main():
-    make_dirs()
-
-    for label in ["real", "fake"]:
-        label_dir = os.path.join(FACES_DIR, label)
-        videos = os.listdir(label_dir)
-
-        splits = split_videos(videos)
-
-        for split, video_names in splits.items():
-            for video_name in video_names:
-                copy_video(video_name, label, split)
-
-        print(f"{label.upper()} -> "
-              f"Train: {len(splits['train'])}, "
-              f"Val: {len(splits['val'])}, "
-              f"Test: {len(splits['test'])}")
+            for vid in vids:
+                shutil.copytree(source_dir / vid, dest_dir / vid)
 
 
 if __name__ == "__main__":
-    main()
+    split_dataset()

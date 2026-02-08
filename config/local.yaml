@@ -1,0 +1,6 @@
+paths:
+  raw_data: "data/raw"
+  processed_faces: "data/processed/faces"
+  splits: "data/splits"
+  weights: "models/deepsafe_best.pth"
+  confusion_matrix: "deepsafe_confusion_matrix.png"

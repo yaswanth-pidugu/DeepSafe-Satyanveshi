@@ -1,98 +1,75 @@
-import os
-import cv2
+import sys
+import warnings
+from pathlib import Path
+from config_manager import cfg
+
+root_dir = Path(__file__).resolve().parent.parent
+if str(root_dir) not in sys.path:
+    sys.path.append(str(root_dir))
+
 import torch
+import cv2
 import numpy as np
-from torchvision import models, transforms
-from torch import nn
-from PIL import Image
+from training.model import DeepSafeModel
+from facenet_pytorch import MTCNN
 
+warnings.filterwarnings("ignore", category=FutureWarning)
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+weights_path = weights_path = cfg['paths']['weights']
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "efficientnet_b0.pth")
-
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-FRAME_INTERVAL = 5       # take every 5th frame
-IMG_SIZE = 224
-
-model = models.efficientnet_b0(weights=None)
-model.classifier[1] = nn.Linear(model.classifier[1].in_features, 1)
-
-checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
-model.load_state_dict(checkpoint["model_state"])
-
-model = model.to(DEVICE)
+model = DeepSafeModel().to(DEVICE)
+model.load_state_dict(torch.load(str(weights_path), weights_only=True))
 model.eval()
 
-transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225]
-    )
-])
+detector = MTCNN(margin=20, keep_all=False, device=DEVICE, image_size=224)
 
 
-
-def extract_frames(video_path, frame_interval=5):
-    cap = cv2.VideoCapture(video_path)
+def get_frames(cap, indices):
     frames = []
-    frame_idx = 0
-
-    while True:
+    for f_idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
         ret, frame = cap.read()
-        if not ret:
-            break
-
-        if frame_idx % frame_interval == 0:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(frame_rgb)
-
-        frame_idx += 1
-
-    cap.release()
+        if not ret: continue
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        face = detector(frame_rgb)
+        if face is not None:
+            frames.append((face + 1) / 2)
     return frames
 
 
-@torch.no_grad()
-def predict_video(video_path):
-    frames = extract_frames(video_path, FRAME_INTERVAL)
+def predict_best(video_path):
+    vid_path = Path(video_path)
+    if not vid_path.is_absolute():
+        vid_path = root_dir / video_path
 
-    if len(frames) == 0:
-        raise ValueError("No frames extracted from video.")
+    cap = cv2.VideoCapture(str(vid_path))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Analyze 30 frames (Two windows of 15) for better stability
+    indices_1 = [int(i * (total_frames // 2 / 15)) for i in range(15)]
+    indices_2 = [int(total_frames // 2 + i * (total_frames // 2 / 15)) for i in range(15)]
 
     probs = []
+    for idx_set in [indices_1, indices_2]:
+        frames = get_frames(cap, idx_set)
+        if len(frames) == 15:
+            video_tensor = torch.stack(frames).unsqueeze(0).to(DEVICE)
+            with torch.no_grad():
+                output = model(video_tensor)
+                probs.append(torch.sigmoid(output).item())
 
-    for frame in frames:
-        img = Image.fromarray(frame)
-        img = transform(img).unsqueeze(0).to(DEVICE)
+    cap.release()
 
-        logits = model(img)
-        prob = torch.sigmoid(logits).item()
-        probs.append(prob)
+    if not probs:
+        return "ERROR", 0.0, "No faces detected."
 
-    k = max(1, int(0.2 * len(probs)))  # top 20%
-    top_k_probs = sorted(probs, reverse=True)[:k]
-    mean_prob = float(np.mean(top_k_probs))
+    final_prob = np.mean(probs)
 
-    return mean_prob, len(probs)
-
-
-if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) < 2:
-        print("Usage: python predict_video.py <video_path>")
-        sys.exit(1)
-
-    video_path = sys.argv[1]
-
-    score, num_frames = predict_video(video_path)
-
-    print(f"Frames analyzed: {num_frames}")
-    print(f"Fake probability: {score:.4f}")
-
-    if score > 0.3:
-        print("Prediction: FAKE")
+    if final_prob > cfg['model']['thresholds']['fake']:
+        verdict = "FAKE"
+    elif final_prob < cfg['model']['thresholds']['real']:
+        verdict = "REAL"
     else:
-        print("Prediction: REAL")
+        verdict = "INCONCLUSIVE (NEEDS REVIEW)"
+
+    return verdict, final_prob, f"Analyzed {len(probs) * 15} frames."

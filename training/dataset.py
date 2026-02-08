@@ -1,31 +1,44 @@
-import os
-from PIL import Image
+import torch
 from torch.utils.data import Dataset
+from PIL import Image
+from pathlib import Path
+from config_manager import cfg
 
-
-class DeepfakeDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.samples = []
+class DeepSafeDataset(Dataset):
+    def __init__(self, split_dir, transform=None, seq_len=cfg['model']['seq_length']):
+        self.split_dir = Path(split_dir)
         self.transform = transform
-        root_dir = os.path.abspath(root_dir)
-        for label, class_name in enumerate(["real", "fake"]):
-            class_dir = os.path.join(root_dir, class_name)
-            for video in os.listdir(class_dir):
-                video_dir = os.path.join(class_dir, video)
-                for img_name in os.listdir(video_dir):
-                    img_path = os.path.join(video_dir, img_name)
-                    self.samples.append((img_path, label, video))
+        self.seq_len = seq_len
+        self.samples = []
 
+        for label, class_idx in [('real', 0), ('fake', 1)]:
+            class_path = self.split_dir / label
+            if not class_path.exists(): continue
+            for vid_folder in class_path.iterdir():
+                if vid_folder.is_dir():
+                    frames = sorted(list(vid_folder.glob("*.jpg")))
+                    if len(frames) > 0:
+                        self.samples.append((frames, class_idx))
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        img_path, label, video = self.samples[idx]
-        image = Image.open(img_path).convert("RGB")
+        frame_paths, label = self.samples[idx]
 
-        if self.transform:
-            image = self.transform(image)
+        frames = []
+        for p in frame_paths:
+            img = Image.open(p).convert('RGB')
+            if self.transform:
+                img = self.transform(img)
+            frames.append(img)
 
-        return image, label, video
+        current_len = len(frames)
+        if current_len < self.seq_len:
+            diff = self.seq_len - current_len
+            frames.extend([frames[-1]] * diff)
+        elif current_len > self.seq_len:
+            frames = frames[:self.seq_len]
 
+        video_tensor = torch.stack(frames)
+        return video_tensor, label

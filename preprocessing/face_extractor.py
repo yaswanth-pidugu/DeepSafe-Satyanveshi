@@ -1,54 +1,53 @@
-import os
-from PIL import Image
+import cv2
+import torch
 from facenet_pytorch import MTCNN
+from pathlib import Path
+from tqdm import tqdm
+from config_manager import cfg
+
+INPUT_DIR = Path(cfg['paths']['raw_data'])
+OUTPUT_DIR = Path(cfg['paths']['processed_faces'])
+FRAMES_PER_VIDEO = cfg['model']['frames_per_video']
+IMG_SIZE = cfg['model']['image_size']
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-FRAMES_DIR = os.path.join(PROJECT_ROOT, "data", "processed", "frames")
-FACES_DIR = os.path.join(PROJECT_ROOT, "data", "processed", "faces")
-
-mtcnn = MTCNN(
-    image_size=224,
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+detector = MTCNN(
     margin=20,
-    select_largest=True,
-    post_process=True
+    keep_all=False,
+    post_process=False,
+    device=device,
+    image_size=IMG_SIZE
 )
 
-def process_split(split_name):
-    input_split_dir = os.path.join(FRAMES_DIR, split_name)
-    output_split_dir = os.path.join(FACES_DIR, split_name)
+def extract_faces():
+    for label in ['real', 'fake']:
+        videos = list((INPUT_DIR / label).glob("*.mp4"))
+        label_out = OUTPUT_DIR / label
+        label_out.mkdir(parents=True, exist_ok=True)
 
-    os.makedirs(output_split_dir, exist_ok=True)
+        print(f"Processing {len(videos)} {label} videos...")
+        for v_path in tqdm(videos):
+            vid_name = v_path.stem
+            save_path = label_out / vid_name
+            save_path.mkdir(parents=True, exist_ok=True)
 
-    for video_folder in os.listdir(input_split_dir):
-        video_input_dir = os.path.join(input_split_dir, video_folder)
-        video_output_dir = os.path.join(output_split_dir, video_folder)
+            cap = cv2.VideoCapture(str(v_path))
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        os.makedirs(video_output_dir, exist_ok=True)
+            # Uniformly sample frames throughout the video
+            indices = [int(i * (total / FRAMES_PER_VIDEO)) for i in range(FRAMES_PER_VIDEO)]
 
-        for frame_file in os.listdir(video_input_dir):
-            frame_path = os.path.join(video_input_dir, frame_file)
+            for i, f_idx in enumerate(indices):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+                ret, frame = cap.read()
+                if not ret: continue
 
-            try:
-                img = Image.open(frame_path).convert("RGB")
-                face = mtcnn(img)
+                # MTCNN requires RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-                if face is not None:
-                    face_img = Image.fromarray(
-                        (face.permute(1, 2, 0).numpy() * 255).astype("uint8")
-                    )
-                    face_img.save(
-                        os.path.join(video_output_dir, frame_file)
-                    )
+                # Extract and Save
+                target_file = str(save_path / f"frame_{i}.jpg")
+                detector(frame_rgb, save_path=target_file)
 
-            except Exception as e:
-                print(f"[WARN] Failed on {frame_path}: {e}")
-
-def main():
-    process_split("real")
-    process_split("fake")
-    print("Face extraction complete.")
-
-if __name__ == "__main__":
-    main()
+            cap.release()

@@ -26,3 +26,6 @@ models/*.pth
 Thumbs.db
 
 .idea/
+
+# Ignore local environment configs
+configs/local.yaml
